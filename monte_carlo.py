@@ -6,49 +6,55 @@ import scipy.stats as stats
 import matplotlib.pyplot as plt
 from pandas_datareader import data as pdr
 
-# import data
-def get_data(stocks, start, end):
-    stockData = pdr.get_data_yahoo(stocks, start, end)
-    stockData = stockData['Close']
-    returns = stockData.pct_change()
-    meanReturns = returns.mean()
-    covMatrix = returns.cov()
-    return meanReturns, covMatrix
+# Import stock data
+def get_stock_data(stocks, start, end):
+    stock_data = pdr.get_data_yahoo(stocks, start, end)
+    stock_data = stock_data['Close']
+    returns = stock_data.pct_change()
+    mean_returns = returns.mean()
+    cov_matrix = returns.cov()
+    return mean_returns, cov_matrix
 
-stockList = ['CBA', 'BHP', 'TLS', 'NAB', 'WBC', 'STO']
-stocks = [stock + '.AX' for stock in stockList]
-endDate = datetime.datetime.now()
-startDate = endDate - datetime.timedelta(days=300)
+# List of stocks
+stock_list = ['CBA', 'BHP', 'TLS', 'NAB', 'WBC', 'STO']
+stocks = [stock + '.AX' for stock in stock_list]
+end_date = datetime.datetime.now()
+start_date = end_date - datetime.timedelta(days=300)
 
-meanReturns, covMatrix = get_data(stocks, startDate, endDate)
+mean_returns, cov_matrix = get_stock_data(stocks, start_date, end_date)
 
-weights = np.random.random(len(meanReturns))
+# Generate random weights for portfolio and normalize
+weights = np.random.random(len(mean_returns))
 weights /= np.sum(weights)
 
-# Monte Carlo Method
+# Monte Carlo simulation parameters
 mc_sims = 400 # number of simulations
-T = 100 #timeframe in days
+time_horizon = 100 # timeframe in days
 
-meanM = np.full(shape=(T, len(weights)), fill_value=meanReturns)
-meanM = meanM.T
+# Create mean matrix
+mean_matrix = np.full(shape=(time_horizon, len(weights)), fill_value=mean_returns).T
 
-portfolio_sims = np.full(shape=(T, mc_sims), fill_value=0.0)
+# Initialize matrix to store simulation results
+portfolio_simulations = np.full(shape=(time_horizon, mc_sims), fill_value=0.0)
 
-initialPortfolio = 10000
+initial_portfolio_value = 10000
 
-for m in range(0, mc_sims):
-    Z = np.random.normal(size=(T, len(weights)))#uncorrelated RV's
-    L = np.linalg.cholesky(covMatrix) #Cholesky decomposition to Lower Triangular Matrix
-    dailyReturns = meanM + np.inner(L, Z) #Correlated daily returns for individual stocks
-    portfolio_sims[:,m] = np.cumprod(np.inner(weights, dailyReturns.T)+1)*initialPortfolio
+# Run Monte Carlo simulation
+for sim in range(mc_sims):
+    random_normals = np.random.normal(size=(time_horizon, len(weights))) # uncorrelated random variables
+    lower_triangular_matrix = np.linalg.cholesky(cov_matrix) # Cholesky decomposition to lower triangular matrix
+    daily_returns = mean_matrix + np.inner(lower_triangular_matrix, random_normals) # correlated daily returns
+    portfolio_simulations[:, sim] = np.cumprod(np.inner(weights, daily_returns.T) + 1) * initial_portfolio_value
 
-plt.plot(portfolio_sims)
+# Plot Monte Carlo simulation results
+plt.plot(portfolio_simulations)
 plt.ylabel('Portfolio Value ($)')
 plt.xlabel('Days')
 plt.title('MC simulation of a stock portfolio')
 plt.show()
 
-def mcVaR(returns, alpha=5):
+# Function to calculate Value at Risk (VaR)
+def calculate_var(returns, alpha=5):
     """ Input: pandas series of returns
         Output: percentile on return distribution to a given confidence level alpha
     """
@@ -57,103 +63,102 @@ def mcVaR(returns, alpha=5):
     else:
         raise TypeError("Expected a pandas data series.")
 
-def mcCVaR(returns, alpha=5):
+# Function to calculate Conditional Value at Risk (CVaR)
+def calculate_cvar(returns, alpha=5):
     """ Input: pandas series of returns
         Output: CVaR or Expected Shortfall to a given confidence level alpha
     """
     if isinstance(returns, pd.Series):
-        belowVaR = returns <= mcVaR(returns, alpha=alpha)
-        return returns[belowVaR].mean()
+        below_var = returns <= calculate_var(returns, alpha=alpha)
+        return returns[below_var].mean()
     else:
         raise TypeError("Expected a pandas data series.")
 
+# Calculate VaR and CVaR
+portfolio_results = pd.Series(portfolio_simulations[-1, :])
+var_5 = initial_portfolio_value - calculate_var(portfolio_results, alpha=5)
+cvar_5 = initial_portfolio_value - calculate_cvar(portfolio_results, alpha=5)
 
-portResults = pd.Series(portfolio_sims[-1,:])
+print('VaR_5 ${}'.format(round(var_5, 2)))
+print('CVaR_5 ${}'.format(round(cvar_5, 2)))
 
-VaR = initialPortfolio - mcVaR(portResults, alpha=5)
-CVaR = initialPortfolio - mcCVaR(portResults, alpha=5)
+# Initial derivative parameters for option pricing
+stock_price = 101.15          # stock price
+strike_price = 98.01          # strike price
+volatility = 0.0991           # volatility (%)
+risk_free_rate = 0.01         # risk-free rate (%)
+num_time_steps = 10           # number of time steps
+num_simulations = 1000        # number of simulations
 
-print('VaR_5 ${}'.format(round(VaR,2)))
-print('CVaR_5 ${}'.format(round(CVaR,2)))
+market_option_value = 3.86    # market price of option
+time_to_maturity = ((datetime.date(2022, 3, 17) - datetime.date(2022, 1, 17)).days + 1) / 365  # time in years
+print(time_to_maturity)
 
-# initial derivative parameters
-S = 101.15          #stock price
-K = 98.01           #strike price
-vol = 0.0991        #volatility (%)
-r = 0.01            #risk-free rate (%)
-N = 10              #number of time steps
-M = 1000            #number of simulations
+# Precompute constants for option pricing
+delta_t = time_to_maturity / num_time_steps
+drift = (risk_free_rate - 0.5 * volatility**2) * delta_t
+volatility_sqrt_t = volatility * np.sqrt(delta_t)
+log_stock_price = np.log(stock_price)
 
-market_value = 3.86 #market price of option
-T = ((datetime.date(2022,3,17)-datetime.date(2022,1,17)).days+1)/365    #time in years
-print(T)
-
-# Precompute constants
-dt = T/N
-nudt = (r - 0.5*vol**2)*dt
-volsdt = vol*np.sqrt(dt)
-lnS = np.log(S)
-
-# Standard Error Placeholders
+# Standard error placeholders
 sum_CT = 0
-sum_CT2 = 0
+sum_CT_squared = 0
 
-# Monte Carlo Method
-for i in range(M):
-    lnSt = lnS
-    for j in range(N):
-        lnSt = lnSt + nudt + volsdt*np.random.normal()
+# Monte Carlo simulation for option pricing
+for i in range(num_simulations):
+    log_stock_price_t = log_stock_price
+    for j in range(num_time_steps):
+        log_stock_price_t = log_stock_price_t + drift + volatility_sqrt_t * np.random.normal()
 
-    ST = np.exp(lnSt)
-    CT = max(0, ST - K)
-    sum_CT = sum_CT + CT
-    sum_CT2 = sum_CT2 + CT*CT
+    simulated_stock_price = np.exp(log_stock_price_t)
+    payoff = max(0, simulated_stock_price - strike_price)
+    sum_CT += payoff
+    sum_CT_squared += payoff * payoff
 
-# Compute Expectation and SE
-C0 = np.exp(-r*T)*sum_CT/M
-sigma = np.sqrt( (sum_CT2 - sum_CT*sum_CT/M)*np.exp(-2*r*T) / (M-1) )
-SE = sigma/np.sqrt(M)
+# Compute expectation and standard error
+option_value = np.exp(-risk_free_rate * time_to_maturity) * sum_CT / num_simulations
+option_variance = np.sqrt((sum_CT_squared - sum_CT * sum_CT / num_simulations) * np.exp(-2 * risk_free_rate * time_to_maturity) / (num_simulations - 1))
+standard_error = option_variance / np.sqrt(num_simulations)
 
-print("Call value is ${0} with SE +/- {1}".format(np.round(C0,2),np.round(SE,2)))
+print("Call value is ${0} with SE +/- {1}".format(np.round(option_value, 2), np.round(standard_error, 2)))
 
-#precompute constants
-dt = T/N
-nudt = (r - 0.5*vol**2)*dt
-volsdt = vol*np.sqrt(dt)
-lnS = np.log(S)
+# Precompute constants for vectorized Monte Carlo simulation
+delta_t = time_to_maturity / num_time_steps
+drift = (risk_free_rate - 0.5 * volatility**2) * delta_t
+volatility_sqrt_t = volatility * np.sqrt(delta_t)
+log_stock_price = np.log(stock_price)
 
-# Monte Carlo Method
-Z = np.random.normal(size=(N, M))
-delta_lnSt = nudt + volsdt*Z
-lnSt = lnS + np.cumsum(delta_lnSt, axis=0)
-lnSt = np.concatenate( (np.full(shape=(1, M), fill_value=lnS), lnSt ) )
+# Vectorized Monte Carlo simulation for option pricing
+random_normals = np.random.normal(size=(num_time_steps, num_simulations))
+delta_log_stock_price_t = drift + volatility_sqrt_t * random_normals
+log_stock_price_t = log_stock_price + np.cumsum(delta_log_stock_price_t, axis=0)
+log_stock_price_t = np.concatenate((np.full(shape=(1, num_simulations), fill_value=log_stock_price), log_stock_price_t))
 
-# Compute Expectation and SE
-ST = np.exp(lnSt)
-CT = np.maximum(0, ST - K)
-C0 = np.exp(-r*T)*np.sum(CT[-1])/M
+# Compute expectation and standard error
+simulated_stock_prices = np.exp(log_stock_price_t)
+option_payoffs = np.maximum(0, simulated_stock_prices - strike_price)
+option_value = np.exp(-risk_free_rate * time_to_maturity) * np.sum(option_payoffs[-1]) / num_simulations
 
-sigma = np.sqrt( np.sum( (CT[-1] - C0)**2) / (M-1) )
-SE = sigma/np.sqrt(M)
+option_variance = np.sqrt(np.sum((option_payoffs[-1] - option_value)**2) / (num_simulations - 1))
+standard_error = option_variance / np.sqrt(num_simulations)
 
-print("Call value is ${0} with SE +/- {1}".format(np.round(C0,2),np.round(SE,2)))
+print("Call value is ${0} with SE +/- {1}".format(np.round(option_value, 2), np.round(standard_error, 2)))
 
-x1 = np.linspace(C0-3*SE, C0-1*SE, 100)
-x2 = np.linspace(C0-1*SE, C0+1*SE, 100)
-x3 = np.linspace(C0+1*SE, C0+3*SE, 100)
+# Plot the probability distribution of the option price
+x1 = np.linspace(option_value - 3 * standard_error, option_value - 1 * standard_error, 100)
+x2 = np.linspace(option_value - 1 * standard_error, option_value + 1 * standard_error, 100)
+x3 = np.linspace(option_value + 1 * standard_error, option_value + 3 * standard_error, 100)
 
-s1 = stats.norm.pdf(x1, C0, SE)
-s2 = stats.norm.pdf(x2, C0, SE)
-s3 = stats.norm.pdf(x3, C0, SE)
+s1 = stats.norm.pdf(x1, option_value, standard_error)
+s2 = stats.norm.pdf(x2, option_value, standard_error)
+s3 = stats.norm.pdf(x3, option_value, standard_error)
 
-plt.fill_between(x1, s1, color='tab:blue',label='> StDev')
-plt.fill_between(x2, s2, color='cornflowerblue',label='1 StDev')
+plt.fill_between(x1, s1, color='tab:blue', label='> 1 Std Dev')
+plt.fill_between(x2, s2, color='cornflowerblue', label='1 Std Dev')
 plt.fill_between(x3, s3, color='tab:blue')
 
-plt.plot([C0,C0],[0, max(s2)*1.1], 'k',
-        label='Theoretical Value')
-plt.plot([market_value,market_value],[0, max(s2)*1.1], 'r',
-        label='Market Value')
+plt.plot([option_value, option_value], [0, max(s2) * 1.1], 'k', label='Theoretical Value')
+plt.plot([market_option_value, market_option_value], [0, max(s2) * 1.1], 'r', label='Market Value')
 
 plt.ylabel("Probability")
 plt.xlabel("Option Price")
